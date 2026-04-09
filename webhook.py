@@ -6,10 +6,24 @@ from utils import (
     identificar_plano,
     identificar_ciclo_por_valor,
 )
+import requests
+import os
 
 app = Flask(__name__)
 
 init_db()
+
+LOVABLE_WEBHOOK_URL = "https://atlas-prime-agency.lovable.app/functions/v1/bot-webhook"
+
+
+def enviar_para_crm(cliente):
+    try:
+        response = requests.post(LOVABLE_WEBHOOK_URL, json=cliente, timeout=20)
+        print("CRM response:", response.status_code, response.text)
+        return True
+    except Exception as e:
+        print("Erro ao enviar para CRM:", e)
+        return False
 
 
 @app.route("/webhook/kiwify", methods=["POST"])
@@ -42,8 +56,8 @@ def webhook_kiwify():
         plano = identificar_plano(product_name)
         ciclo = identificar_ciclo_por_valor(product_name, amount)
 
-        hoje = hoje_str()
-        vigencia = calcular_vigencia(ciclo)
+        data_compra = hoje_str()
+        vigencia_ate = calcular_vigencia(ciclo)
 
         if not email:
             return jsonify({
@@ -51,23 +65,46 @@ def webhook_kiwify():
                 "erro": "email não encontrado no payload"
             }), 400
 
+        status_inicial = "aguardando validação" if plano == "vip" else "aguardando liberação"
+        verificacao_documental = "pendente" if plano == "vip" else "validado"
+
         add_or_update_cliente(
             nome=nome,
             telefone=telefone,
             email=email,
             plano=plano,
             ciclo=ciclo,
-            status="aguardando liberação",
-            data_compra=hoje,
-            ultimo_pagamento=hoje,
-            vigencia_ate=vigencia,
-            origem=None,
+            status=status_inicial,
+            data_compra=data_compra,
+            ultimo_pagamento=data_compra,
+            vigencia_ate=vigencia_ate,
+            origem="kiwify",
             regiao=None,
             telegram_id=None,
-            validacao_documental="pendente" if plano == "vip" else None,
+            validacao_documental=verificacao_documental,
             data_liberacao=None,
             observacoes=None
         )
+
+        cliente = {
+            "nome": nome,
+            "telefone": telefone,
+            "email": email,
+            "telegram_id": None,
+            "plano": plano,
+            "ciclo": ciclo,
+            "regiao": None,
+            "origem": "kiwify",
+            "status": status_inicial,
+            "verificacao_documental": verificacao_documental,
+            "data_compra": data_compra,
+            "ultimo_pagamento": data_compra,
+            "vigencia_ate": vigencia_ate,
+            "data_liberacao": None,
+            "observacoes": None
+        }
+
+        enviar_para_crm(cliente)
 
         return jsonify({
             "ok": True,
@@ -87,8 +124,6 @@ def webhook_kiwify():
 def home():
     return "Webhook ATLAS PRIME online.", 200
 
-
-import os
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
