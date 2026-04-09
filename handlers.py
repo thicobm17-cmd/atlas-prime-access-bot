@@ -3,11 +3,9 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
     MessageHandler,
-    CommandHandler,
     CallbackQueryHandler,
     filters,
 )
-
 from config import (
     LINK_REGIONAL,
     LINK_BRASIL,
@@ -16,6 +14,7 @@ from config import (
     GROUP_BALCAO,
 )
 from database import get_cliente_by_email, update_cliente_field
+import requests
 
 PEDINDO_EMAIL = 1
 ESCOLHENDO_ORIGEM = 2
@@ -29,6 +28,59 @@ ORIGENS_VALIDAS = [
     "Google",
     "Pinterest",
 ]
+
+LOVABLE_WEBHOOK_URL = "https://atlas-prime-agency.lovable.app/functions/v1/bot-webhook"
+
+
+def cliente_row_para_dict(cliente):
+    return {
+        "nome": cliente["nome"],
+        "telefone": cliente["telefone"],
+        "email": cliente["email"],
+        "telegram_id": cliente["telegram_id"],
+        "plano": cliente["plano"],
+        "ciclo": cliente["ciclo"],
+        "regiao": cliente["regiao"],
+        "origem": cliente["origem"],
+        "status": cliente["status"],
+        "verificacao_documental": cliente["validacao_documental"],
+        "data_compra": cliente["data_compra"],
+        "ultimo_pagamento": cliente["ultimo_pagamento"],
+        "vigencia_ate": cliente["vigencia_ate"],
+        "data_liberacao": cliente["data_liberacao"],
+        "observacoes": cliente["observacoes"],
+    }
+
+
+def enviar_para_crm(cliente):
+    try:
+        response = requests.post(
+            LOVABLE_WEBHOOK_URL,
+            json=cliente,
+            timeout=20
+        )
+        print("CRM update response:", response.status_code, response.text)
+        return True
+    except Exception as e:
+        print("Erro ao atualizar CRM pelo bot:", e)
+        return False
+
+
+def atualizar_cliente_no_crm_por_email(email):
+    cliente = get_cliente_by_email(email)
+    if not cliente:
+        print("Cliente não encontrado para atualizar CRM:", email)
+        return False
+
+    payload = cliente_row_para_dict(cliente)
+    return enviar_para_crm(payload)
+
+
+async def responder(update_or_query, texto, reply_markup=None):
+    if hasattr(update_or_query, "message") and update_or_query.message:
+        await update_or_query.message.reply_text(texto, reply_markup=reply_markup)
+    else:
+        await update_or_query.message.reply_text(texto, reply_markup=reply_markup)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -81,10 +133,13 @@ async def receber_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     telegram_id = update.effective_user.id
     update_cliente_field(email, "telegram_id", telegram_id)
+    atualizar_cliente_no_crm_por_email(email)
 
     context.user_data["email_em_liberacao"] = email
 
+    cliente = get_cliente_by_email(email)
     origem_atual = cliente["origem"]
+
     if not origem_atual:
         keyboard = [
             [InlineKeyboardButton("Indicação", callback_data="origem:Indicação")],
@@ -119,6 +174,8 @@ async def escolher_origem(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     update_cliente_field(email, "origem", origem)
+    atualizar_cliente_no_crm_por_email(email)
+
     await query.edit_message_text(f"Origem registrada: {origem}")
 
     return await continuar_liberacao(query, context, email)
@@ -128,24 +185,17 @@ async def continuar_liberacao(update_or_query, context: ContextTypes.DEFAULT_TYP
     cliente = get_cliente_by_email(email)
 
     if not cliente:
-        if hasattr(update_or_query, "message") and update_or_query.message:
-            await update_or_query.message.reply_text("Cliente não encontrado.")
-        else:
-            await update_or_query.message.reply_text("Cliente não encontrado.")
+        await responder(update_or_query, "Cliente não encontrado.")
         return ConversationHandler.END
 
     plano = cliente["plano"]
     status = cliente["status"]
 
     if status not in ["ativo", "aguardando liberação", "aguardando validação"]:
-        if hasattr(update_or_query, "message") and update_or_query.message:
-            await update_or_query.message.reply_text(
-                f"Seu cadastro foi encontrado, mas o status atual é: {status}."
-            )
-        else:
-            await update_or_query.message.reply_text(
-                f"Seu cadastro foi encontrado, mas o status atual é: {status}."
-            )
+        await responder(
+            update_or_query,
+            f"Seu cadastro foi encontrado, mas o status atual é: {status}."
+        )
         return ConversationHandler.END
 
     if plano == "regional":
@@ -157,22 +207,15 @@ async def continuar_liberacao(update_or_query, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("Sul", callback_data="regiao:sul")],
         ]
 
-        if hasattr(update_or_query, "message") and update_or_query.message:
-            await update_or_query.message.reply_text(
-                "Escolha sua região para liberar seu acesso:",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-            )
-        else:
-            await update_or_query.message.reply_text(
-                "Escolha sua região para liberar seu acesso:",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-            )
-
+        await responder(
+            update_or_query,
+            "Escolha sua região para liberar seu acesso:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
         return ESCOLHENDO_REGIAO
 
     if plano == "brasil":
         grupos = GROUPS_REGIONAIS.values()
-
         links = []
 
         for group_id in grupos:
@@ -182,37 +225,30 @@ async def continuar_liberacao(update_or_query, context: ContextTypes.DEFAULT_TYP
             )
             links.append(invite.invite_link)
 
+        update_cliente_field(email, "data_liberacao", cliente["data_compra"])
+        atualizar_cliente_no_crm_por_email(email)
+
         texto_links = "\n".join(links)
 
-        if hasattr(update_or_query, "message") and update_or_query.message:
-            await update_or_query.message.reply_text(
-                "Aqui estão seus acessos aos grupos do plano Brasil:\n\n"
-                f"{texto_links}"
-            )
-        else:
-            await update_or_query.message.reply_text(
-                "Aqui estão seus acessos aos grupos do plano Brasil:\n\n"
-                f"{texto_links}"
-            )
-
+        await responder(
+            update_or_query,
+            "Aqui estão seus acessos aos grupos do plano Brasil:\n\n"
+            f"{texto_links}"
+        )
         return ConversationHandler.END
 
     if plano == "vip":
-        if hasattr(update_or_query, "message") and update_or_query.message:
-            await update_or_query.message.reply_text(
-                "Compra localizada. No próximo bloco vamos iniciar sua liberação VIP."
-            )
-        else:
-            await update_or_query.message.reply_text(
-                "Compra localizada. No próximo bloco vamos iniciar sua liberação VIP."
-            )
+        update_cliente_field(email, "status", "aguardando validação")
+        atualizar_cliente_no_crm_por_email(email)
+
+        await responder(
+            update_or_query,
+            "Sua compra VIP foi localizada com sucesso.\n\n"
+            "No próximo passo, você seguirá para a validação documental antes da liberação do balcão."
+        )
         return ConversationHandler.END
 
-    if hasattr(update_or_query, "message") and update_or_query.message:
-        await update_or_query.message.reply_text("Seu plano não foi reconhecido.")
-    else:
-        await update_or_query.message.reply_text("Seu plano não foi reconhecido.")
-
+    await responder(update_or_query, "Seu plano não foi reconhecido.")
     return ConversationHandler.END
 
 
@@ -233,6 +269,8 @@ async def escolher_regiao(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     update_cliente_field(email, "regiao", regiao)
+    update_cliente_field(email, "data_liberacao", get_cliente_by_email(email)["data_compra"])
+    atualizar_cliente_no_crm_por_email(email)
 
     invite = await context.bot.create_chat_invite_link(
         chat_id=group_id,
