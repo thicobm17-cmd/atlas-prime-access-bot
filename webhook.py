@@ -13,12 +13,41 @@ app = Flask(__name__)
 
 init_db()
 
-LOVABLE_WEBHOOK_URL = "https://atlas-prime-agency.lovable.app/functions/v1/bot-webhook"
+LOVABLE_WEBHOOK_URL = "https://rubvdwpjundrwthfeewy.supabase.co/functions/v1/bot-webhook"
+LOVABLE_ANON_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ1YnZkd3BqdW5kcnd0aGZlZXd5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU3NDU1NzEsImV4cCI6MjA5MTMyMTU3MX0.SFx0jt3O2ilA1d7iG6M_CopdIQaersUO7TJ8iL9jZPY"
+
+
+def mapear_plano_para_crm(plano):
+    if plano == "regional":
+        return "Plano Regional"
+    if plano == "brasil":
+        return "Plano Brasil"
+    if plano == "vip":
+        return "Plano VIP"
+    return "Plano Regional"
+
+
+def mapear_ciclo_para_crm(ciclo):
+    if ciclo == "mensal":
+        return "Mensal"
+    if ciclo == "anual":
+        return "Anual"
+    return "Mensal"
 
 
 def enviar_para_crm(cliente):
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LOVABLE_ANON_TOKEN}"
+    }
+
     try:
-        response = requests.post(LOVABLE_WEBHOOK_URL, json=cliente, timeout=20)
+        response = requests.post(
+            LOVABLE_WEBHOOK_URL,
+            json=cliente,
+            headers=headers,
+            timeout=20
+        )
         print("CRM response:", response.status_code, response.text)
         return True
     except Exception as e:
@@ -65,8 +94,8 @@ def webhook_kiwify():
                 "erro": "email não encontrado no payload"
             }), 400
 
-        status_inicial = "aguardando validação" if plano == "vip" else "aguardando liberação"
-        verificacao_documental = "pendente" if plano == "vip" else "validado"
+        status_inicial = "Aguardando validação" if plano == "vip" else "Aguardando liberação"
+        verificacao_documental = "Pendente" if plano == "vip" else "Validado"
 
         add_or_update_cliente(
             nome=nome,
@@ -74,14 +103,14 @@ def webhook_kiwify():
             email=email,
             plano=plano,
             ciclo=ciclo,
-            status=status_inicial,
+            status=status_inicial.lower(),
             data_compra=data_compra,
             ultimo_pagamento=data_compra,
             vigencia_ate=vigencia_ate,
             origem="kiwify",
             regiao=None,
             telegram_id=None,
-            validacao_documental=verificacao_documental,
+            validacao_documental=verificacao_documental.lower(),
             data_liberacao=None,
             observacoes=None
         )
@@ -90,18 +119,18 @@ def webhook_kiwify():
             "nome": nome,
             "telefone": telefone,
             "email": email,
-            "telegram_id": None,
-            "plano": plano,
-            "ciclo": ciclo,
-            "regiao": None,
-            "origem": "kiwify",
+            "telegram_id": "",
+            "plano": mapear_plano_para_crm(plano),
+            "ciclo": mapear_ciclo_para_crm(ciclo),
+            "regiao": "",
+            "origem": "Kiwify",
             "status": status_inicial,
             "verificacao_documental": verificacao_documental,
             "data_compra": data_compra,
             "ultimo_pagamento": data_compra,
             "vigencia_ate": vigencia_ate,
-            "data_liberacao": None,
-            "observacoes": None
+            "data_liberacao": "",
+            "observacoes": ""
         }
 
         enviar_para_crm(cliente)
