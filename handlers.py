@@ -6,10 +6,13 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters,
 )
+from pathlib import Path
+import json
 from config import (
     LINK_REGIONAL,
     LINK_BRASIL,
     LINK_VIP,
+    GROUP_CONTROLE,
     GROUPS_REGIONAIS,
     GROUP_BALCAO,
     SUPORTE_TELEGRAM,
@@ -25,6 +28,7 @@ import unicodedata
 PEDINDO_EMAIL = 1
 ESCOLHENDO_ORIGEM = 2
 ESCOLHENDO_REGIAO = 3
+QUOTATION_CACHE_FILE = Path(__file__).resolve().with_name("quotation_cache.json")
 
 ORIGENS_VALIDAS = [
     "Indicacao",
@@ -73,6 +77,72 @@ def normalizar_status(status):
     return "".join(
         caractere for caractere in unicodedata.normalize("NFKD", valor)
         if not unicodedata.combining(caractere)
+    )
+
+
+def normalizar_texto_livre(texto):
+    valor = (texto or "").strip().lower()
+    return "".join(
+        caractere for caractere in unicodedata.normalize("NFKD", valor)
+        if not unicodedata.combining(caractere)
+    )
+
+
+def extrair_trecho_cotacao(texto):
+    if not texto:
+        return None
+
+    linhas = [linha.rstrip() for linha in texto.splitlines()]
+    inicio = None
+    fim = None
+
+    for indice, linha in enumerate(linhas):
+        linha_normalizada = normalizar_texto_livre(linha)
+        if inicio is None and "dia anterior" in linha_normalizada:
+            inicio = indice
+        if "avianca" in linha_normalizada:
+            fim = indice
+
+    if inicio is None or fim is None or fim < inicio:
+        return None
+
+    trecho = "\n".join(linha for linha in linhas[inicio:fim + 1] if linha.strip())
+    return trecho.strip() or None
+
+
+def mensagem_parece_cotacao(texto):
+    texto_normalizado = normalizar_texto_livre(texto)
+    return (
+        "dia anterior" in texto_normalizado
+        and "avianca" in texto_normalizado
+        and "latam" in texto_normalizado
+    )
+
+
+def salvar_cotacao_cache(payload):
+    QUOTATION_CACHE_FILE.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def carregar_cotacao_cache():
+    if not QUOTATION_CACHE_FILE.exists():
+        return None
+
+    try:
+        return json.loads(QUOTATION_CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def montar_texto_cotacao(cache):
+    data_referencia = cache.get("message_date") or "data indisponivel"
+    trecho = cache.get("quotation_text") or ""
+    return (
+        "Cotacao media mais recente registrada no Atlas Prime Controle.\n\n"
+        f"Referencia da mensagem: {data_referencia}\n\n"
+        f"{trecho}"
     )
 
 
@@ -390,6 +460,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Comandos disponiveis:\n"
         "/planos - ver os planos\n"
         "/liberar - liberar seu acesso apos a compra\n"
+        "/cotacao - consultar a cotacao media mais recente\n"
         "/status - consultar seu status\n"
         "/id - ver IDs\n"
         "/teste_regional - testar link de grupo regional\n"
@@ -414,6 +485,39 @@ async def planos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(texto, reply_markup=reply_markup)
+
+
+async def cotacao(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cache = carregar_cotacao_cache()
+    if not cache or not cache.get("quotation_text"):
+        await update.message.reply_text(
+            "Ainda nao tenho uma cotacao media registrada no momento."
+        )
+        return
+
+    await update.message.reply_text(montar_texto_cotacao(cache))
+
+
+async def capturar_cotacao_controle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    if not message or update.effective_chat.id != GROUP_CONTROLE:
+        return
+
+    texto = message.text or message.caption or ""
+    if not texto or not mensagem_parece_cotacao(texto):
+        return
+
+    trecho = extrair_trecho_cotacao(texto)
+    if not trecho:
+        return
+
+    payload = {
+        "message_id": message.message_id,
+        "chat_id": update.effective_chat.id,
+        "message_date": message.date.astimezone().strftime("%Y-%m-%d %H:%M"),
+        "quotation_text": trecho,
+    }
+    salvar_cotacao_cache(payload)
 
 
 async def liberar(update: Update, context: ContextTypes.DEFAULT_TYPE):

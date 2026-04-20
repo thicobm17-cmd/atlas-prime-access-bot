@@ -10,11 +10,13 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from config import TELEGRAM_BOT_TOKEN
+from config import TELEGRAM_BOT_TOKEN, GROUP_CONTROLE
 from database import init_db
 from handlers import (
     start,
     planos,
+    cotacao,
+    capturar_cotacao_controle,
     liberar,
     receber_email,
     status,
@@ -46,10 +48,23 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("planos", planos))
+    app.add_handler(CommandHandler("cotacao", cotacao))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("id", id_handler))
     app.add_handler(CommandHandler("teste_regional", teste_regional))
     app.add_handler(CommandHandler("teste_balcao", teste_balcao))
+    app.add_handler(
+        MessageHandler(
+            filters.Regex(r"^/cotação(?:@[\w_]+)?$"),
+            cotacao,
+        )
+    )
+    app.add_handler(
+        MessageHandler(
+            filters.Chat(chat_id=GROUP_CONTROLE) & (filters.TEXT | filters.CAPTION),
+            capturar_cotacao_controle,
+        )
+    )
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("liberar", liberar)],
