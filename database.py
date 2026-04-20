@@ -1,7 +1,8 @@
 import sqlite3
+from pathlib import Path
 from contextlib import closing
 
-DB_NAME = "atlas_prime.db"
+DB_NAME = str(Path(__file__).resolve().with_name("atlas_prime.db"))
 
 
 def get_connection():
