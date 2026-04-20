@@ -137,11 +137,9 @@ def carregar_cotacao_cache():
 
 
 def montar_texto_cotacao(cache):
-    data_referencia = cache.get("message_date") or "data indisponivel"
     trecho = cache.get("quotation_text") or ""
     return (
         "Cotacao media mais recente registrada no Atlas Prime Controle.\n\n"
-        f"Referencia da mensagem: {data_referencia}\n\n"
         f"{trecho}"
     )
 
@@ -514,7 +512,6 @@ async def capturar_cotacao_controle(update: Update, context: ContextTypes.DEFAUL
     payload = {
         "message_id": message.message_id,
         "chat_id": update.effective_chat.id,
-        "message_date": message.date.astimezone().strftime("%Y-%m-%d %H:%M"),
         "quotation_text": trecho,
     }
     salvar_cotacao_cache(payload)
